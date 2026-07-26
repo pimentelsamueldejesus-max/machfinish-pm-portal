@@ -1,89 +1,42 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
 
 # Page configuration
 st.set_page_config(
     page_title="MachFinish PM & Asset Management",
     page_icon="⚙️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# Custom CSS styling
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #1E3A8A;
-        margin-bottom: 0.2rem;
-    }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #4B5563;
-        margin-bottom: 1.5rem;
-    }
-    .metric-card {
-        background-color: #F8FAFC;
-        border-radius: 8px;
-        padding: 15px;
-        border-left: 5px solid #2563EB;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
+EXCEL_FILE = 'MACHFINISH_Preventive_Maintenance_Program.xlsx'
 
-@st.cache_data
-def load_data(file_path):
-    # Load Asset Registry
-    df_assets = pd.read_excel(file_path, sheet_name='Asset Registry', header=3).dropna(subset=['Asset ID'])
+# Initialize data in Streamlit Session State so changes persist during the session
+if 'df_assets' not in st.session_state or 'df_pm' not in st.session_state:
+    df_assets = pd.read_excel(EXCEL_FILE, sheet_name='Asset Registry', header=3).dropna(subset=['Asset ID'])
+    df_pm = pd.read_excel(EXCEL_FILE, sheet_name='PM Schedule', header=3).dropna(subset=['Asset ID'])
     
-    # Load PM Schedule
-    df_pm = pd.read_excel(file_path, sheet_name='PM Schedule', header=3).dropna(subset=['Asset ID'])
-    
-    # Convert Excel serial dates if present, else standard datetime format
-    for df in [df_assets, df_pm]:
-        for col in ['Last Service Date', 'Next Service Due', 'Install / Purchase Date']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
-                
-    # Clean numeric columns
+    # Clean numeric types
     df_assets['Purchase Cost'] = pd.to_numeric(df_assets['Purchase Cost'], errors='coerce').fillna(0)
     df_pm['Est. Labor (Hrs)'] = pd.to_numeric(df_pm['Est. Labor (Hrs)'], errors='coerce').fillna(0)
     
-    return df_assets, df_pm
+    st.session_state.df_assets = df_assets
+    st.session_state.df_pm = df_pm
 
-# Load data (Replace path with your actual Excel file location)
-EXCEL_FILE = 'MACHFINISH_Preventive_Maintenance_Program.xlsx'
-
-try:
-    df_assets, df_pm = load_data(EXCEL_FILE)
-except Exception as e:
-    st.error(f"Error loading Excel file: {e}")
-    st.stop()
-
-# Header Section
-st.markdown('<div class="main-header">⚙️ MachFinish Preventive Maintenance Portal</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Facility Asset Registry, Criticality Matrix & Work Order Management</div>', unsafe_allow_html=True)
+st.title("⚙️ MachFinish Preventive Maintenance Portal")
 
 # Sidebar Filters
 st.sidebar.header("🔍 Global Filters")
 
-lines = ["All"] + sorted(df_assets['Facility / Line'].dropna().unique().tolist())
+lines = ["All"] + sorted(st.session_state.df_assets['Facility / Line'].dropna().unique().tolist())
 selected_line = st.sidebar.selectbox("Facility Line / Location", lines)
 
-criticalities = ["All"] + sorted(df_assets['Criticality'].dropna().unique().tolist())
+criticalities = ["All"] + sorted(st.session_state.df_assets['Criticality'].dropna().unique().tolist())
 selected_crit = st.sidebar.selectbox("Criticality Level", criticalities)
 
-frequencies = ["All"] + sorted(df_assets['PM Frequency'].dropna().unique().tolist())
-selected_freq = st.sidebar.selectbox("PM Frequency", frequencies)
-
-# Apply Filters
-filtered_assets = df_assets.copy()
-filtered_pm = df_pm.copy()
+# Filter Data
+filtered_assets = st.session_state.df_assets.copy()
+filtered_pm = st.session_state.df_pm.copy()
 
 if selected_line != "All":
     filtered_assets = filtered_assets[filtered_assets['Facility / Line'] == selected_line]
@@ -93,147 +46,69 @@ if selected_crit != "All":
     filtered_assets = filtered_assets[filtered_assets['Criticality'] == selected_crit]
     filtered_pm = filtered_pm[filtered_pm['Criticality'] == selected_crit]
 
-if selected_freq != "All":
-    filtered_assets = filtered_assets[filtered_assets['PM Frequency'] == selected_freq]
-    filtered_pm = filtered_pm[filtered_pm['PM Frequency'] == selected_freq]
+# Tabs
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🏭 Asset Registry", "🛠️ Work Orders (Editable)"])
 
-# Main KPI Summary Cards
-kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-
-total_units = len(filtered_assets)
-total_value = filtered_assets['Purchase Cost'].sum()
-high_crit_count = len(filtered_assets[filtered_assets['Criticality'] == 'High'])
-total_labor_hrs = filtered_pm['Est. Labor (Hrs)'].sum()
-scheduled_orders = len(filtered_pm)
-
-kpi1.metric("Total Active Assets", f"{total_units}")
-kpi2.metric("Portfolio Valuation", f"${total_value:,.2f}")
-kpi3.metric("High Criticality Assets", f"{high_crit_count}")
-kpi4.metric("Total Est. Labor", f"{total_labor_hrs:.1f} hrs")
-kpi5.metric("Active Maintenance Work Orders", f"{scheduled_orders}")
-
-st.markdown("---")
-
-# Navigation Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Executive Analytics", 
-    "🏭 Asset Registry Explorer", 
-    "📅 PM Schedule & Tasks", 
-    "🛠️ Maintenance Work Orders"
-])
-
-# TAB 1: EXECUTIVE ANALYTICS
 with tab1:
-    col_chart1, col_chart2 = st.columns(2)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Total Active Assets", len(filtered_assets))
+    k2.metric("Portfolio Value", f"${filtered_assets['Purchase Cost'].sum():,.2f}")
+    k3.metric("Scheduled PM Orders", len(filtered_pm))
     
-    with col_chart1:
-        st.subheader("Asset Valuation by Facility / Line")
-        val_by_line = filtered_assets.groupby('Facility / Line')['Purchase Cost'].sum().reset_index()
-        fig_line = px.bar(
-            val_by_line, 
-            x='Purchase Cost', 
-            y='Facility / Line', 
-            orientation='h',
-            text_auto='$,.0f',
-            color='Purchase Cost',
-            color_continuous_scale='Blues'
-        )
-        fig_line.update_layout(xaxis_title="Total Value ($)", yaxis_title="", showlegend=False)
-        st.plotly_chart(fig_line, use_container_width=True)
-        
-    with col_chart2:
-        st.subheader("Criticality Breakdown")
-        crit_counts = filtered_assets['Criticality'].value_counts().reset_index()
-        crit_counts.columns = ['Criticality', 'Count']
-        fig_crit = px.pie(
-            crit_counts, 
-            names='Criticality', 
-            values='Count', 
-            color='Criticality',
-            color_discrete_map={'High': '#EF4444', 'Medium': '#F59E0B', 'Low': '#10B981'},
-            hole=0.4
-        )
-        st.plotly_chart(fig_crit, use_container_width=True)
+    st.markdown("---")
+    fig = px.pie(filtered_assets, names='Criticality', title="Criticality Breakdown", color='Criticality',
+                 color_discrete_map={'High': '#EF4444', 'Medium': '#F59E0B', 'Low': '#10B981'})
+    st.plotly_chart(fig, use_container_width=True)
 
-    col_chart3, col_chart4 = st.columns(2)
-    with col_chart3:
-        st.subheader("PM Maintenance Frequency Schedule")
-        freq_counts = filtered_assets['PM Frequency'].value_counts().reset_index()
-        freq_counts.columns = ['Frequency', 'Assets']
-        fig_freq = px.bar(freq_counts, x='Frequency', y='Assets', color='Frequency', text_auto=True)
-        st.plotly_chart(fig_freq, use_container_width=True)
-
-    with col_chart4:
-        st.subheader("Estimated Labor Hours by Facility Line")
-        labor_by_line = filtered_pm.groupby('Facility / Line')['Est. Labor (Hrs)'].sum().reset_index()
-        fig_labor = px.bar(labor_by_line, x='Facility / Line', y='Est. Labor (Hrs)', color='Facility / Line')
-        st.plotly_chart(fig_labor, use_container_width=True)
-
-# TAB 2: ASSET REGISTRY EXPLORER
 with tab2:
-    st.subheader("Equipment Tracking & Electrical Specifications")
-    
-    # Asset Table Display
-    display_cols = [
-        'Asset ID', 'Manufacturer', 'Model No.', 'Serial No.', 'Asset Category', 
-        'Facility / Line', 'Voltage / Power', 'Full Load Current', 
-        'Operational Status', 'Criticality', 'Purchase Cost', 'PM Frequency'
-    ]
-    st.dataframe(filtered_assets[display_cols], use_container_width=True, hide_index=True)
-    
-    st.markdown("### Asset Detail Lookup")
-    selected_asset_id = st.selectbox("Select Asset ID for Full Specifications", sorted(filtered_assets['Asset ID'].unique()))
-    
-    asset_detail = filtered_assets[filtered_assets['Asset ID'] == selected_asset_id].iloc[0]
-    
-    d_col1, d_col2, d_col3 = st.columns(3)
-    with d_col1:
-        st.markdown(f"**Manufacturer:** {asset_detail['Manufacturer']}")
-        st.markdown(f"**Model:** {asset_detail['Model No.']}")
-        st.markdown(f"**Serial No:** {asset_detail['Serial No.']}")
-        st.markdown(f"**B.O.M / Order No:** {asset_detail['B.O.M. / Job / Order No.']}")
-    with d_col2:
-        st.markdown(f"**Category:** {asset_detail['Asset Category']}")
-        st.markdown(f"**Location:** {asset_detail['Facility / Line']}")
-        st.markdown(f"**Voltage / Power:** {asset_detail['Voltage / Power']}")
-        st.markdown(f"**Full Load Current:** {asset_detail['Full Load Current']}")
-    with d_col3:
-        st.markdown(f"**Operating Specs:** {asset_detail['Operating Specs / Temp / Capacity']}")
-        st.markdown(f"**Purchase Cost:** ${asset_detail['Purchase Cost']:,.2f}")
-        st.markdown(f"**Install Date:** {asset_detail['Install / Purchase Date']}")
-        st.markdown(f"**Next PM Due:** {asset_detail['Next Service Due']}")
+    st.subheader("Asset Registry")
+    st.dataframe(filtered_assets, use_container_width=True, hide_index=True)
 
-# TAB 3: PM SCHEDULE & TASKS
+# TAB 3: EDITABLE WORK ORDERS
 with tab3:
-    st.subheader("Master Preventive Maintenance Execution Plan")
-    pm_display = [
-        'Asset ID', 'Equipment Description', 'Facility / Line', 'Criticality', 
-        'PM Frequency', 'Assigned Task / Service Standard', 'Est. Labor (Hrs)', 
-        'Required Parts / Consumables', 'Completion Status'
-    ]
-    st.dataframe(filtered_pm[pm_display], use_container_width=True, hide_index=True)
-
-# TAB 4: WORK ORDER TRACKER
-with tab4:
     st.subheader("Interactive Work Order Manager")
     
-    wo_asset = st.selectbox("Select Asset to Update Work Order Status", sorted(filtered_pm['Asset ID'].unique()))
+    # 1. Edit using the Data Editor Table directly
+    st.markdown("#### Option 1: Edit Table Directly")
+    st.info("Double-click any cell in the **Completion Status** or **Assigned Task** columns below to edit:")
     
-    wo_row = filtered_pm[filtered_pm['Asset ID'] == wo_asset].iloc[0]
+    edited_df = st.data_editor(
+        st.session_state.df_pm[['Asset ID', 'Equipment Description', 'Facility / Line', 'Criticality', 'Completion Status', 'Assigned Task / Service Standard']],
+        key="pm_editor",
+        use_container_width=True,
+        hide_index=True
+    )
     
-    with st.form("work_order_form"):
-        st.markdown(f"### Work Order for Asset: `{wo_asset}` - {wo_row['Equipment Description']}")
-        st.info(f"**Standard Task:** {wo_row['Assigned Task / Service Standard']}")
-        st.warning(f"**Required Parts:** {wo_row['Required Parts / Consumables']}")
+    if st.button("Save Table Updates"):
+        # Update session state with edited table values
+        st.session_state.df_pm.update(edited_df)
+        st.success("Work orders updated successfully!")
+
+    st.markdown("---")
+
+    # 2. Edit single Work Order via Form
+    st.markdown("#### Option 2: Update Single Work Order")
+    wo_asset = st.selectbox("Select Asset ID", sorted(st.session_state.df_pm['Asset ID'].unique()))
+    
+    # Find matching row index
+    row_idx = st.session_state.df_pm[st.session_state.df_pm['Asset ID'] == wo_asset].index[0]
+    current_row = st.session_state.df_pm.loc[row_idx]
+    
+    with st.form("single_wo_form"):
+        st.write(f"Editing: **{current_row['Equipment Description']}**")
         
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            status = st.selectbox("Status", ["Scheduled", "In Progress", "Completed", "On Hold"], index=0)
-        with c2:
-            actual_labor = st.number_input("Actual Labor Hours", value=float(wo_row['Est. Labor (Hrs)']))
-        with c3:
-            tech_notes = st.text_input("Technician Notes / Findings")
-            
-        submit = st.form_submit_button("Save Work Order Status")
+        status_options = ["Scheduled", "In Progress", "Completed", "On Hold"]
+        curr_status = current_row['Completion Status']
+        default_index = status_options.index(curr_status) if curr_status in status_options else 0
+        
+        new_status = st.selectbox("Status", status_options, index=default_index)
+        new_task = st.text_area("Assigned Task / Service Standard", value=str(current_row['Assigned Task / Service Standard']))
+        
+        submit = st.form_submit_button("Update Work Order")
         if submit:
-            st.success(f"Work order status for {wo_asset} updated to **{status}** successfully!")
+            st.session_state.df_pm.loc[row_idx, 'Completion Status'] = new_status
+            st.session_state.df_pm.loc[row_idx, 'Assigned Task / Service Standard'] = new_task
+            st.success(f"Work order for **{wo_asset}** updated to **{new_status}**!")
+            st.rerun()
+      
+     
